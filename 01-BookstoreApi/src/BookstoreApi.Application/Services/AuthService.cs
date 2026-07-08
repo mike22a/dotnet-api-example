@@ -1,54 +1,49 @@
-using BookstoreApi.Application.Data;
 using BookstoreApi.Application.DTOs.Auth;
+using BookstoreApi.Application.Interfaces;
 using BookstoreApi.Domain.Entities;
 using BookstoreApi.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
+using BookstoreApi.Domain.Interfaces.Repositories;
 
 namespace BookstoreApi.Application.Services;
 
 public class AuthService
 {
-    private readonly AppDbContext _context;
-    private readonly JwtService _jwtService;
+    private readonly IUserRepository _userRepo;
+    private readonly IJwtService _jwtService;
 
-    public AuthService(AppDbContext context, JwtService jwtService)
+    public AuthService(IUserRepository userRepo, IJwtService jwtService)
     {
-        _context = context;
+        _userRepo = userRepo;
         _jwtService = jwtService;
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
     {
-        var exists = await _context.Users.AnyAsync(u => u.Email == request.Email);
+        // Business rule: email must be unique
+        var exists = await _userRepo.ExistsByEmailAsync(request.Email);
         if (exists)
             throw new ConflictException($"Email '{request.Email}' is already registered.");
 
-        var user = new User
-        {
-            Name = request.Name,
-            Email = request.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password)
-        };
+        var user = new User { Name = request.Name, Email = request.Email };
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
+        // Password hashing is an infrastructure concern — repository handles it
+        var created = await _userRepo.CreateAsync(user, request.Password);
 
         return new AuthResponse
         {
-            Token = _jwtService.GenerateToken(user),
-            Name = user.Name,
-            Email = user.Email
+            Token = _jwtService.GenerateToken(created),
+            Name = created.Name,
+            Email = created.Email
         };
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request)
     {
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Email == request.Email)
+        var user = await _userRepo.FindByEmailAsync(request.Email)
             ?? throw new NotFoundException("Invalid email or password.");
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        // Password verification delegated to repository (Infrastructure concern)
+        if (!_userRepo.VerifyPassword(request.Password, user.PasswordHash))
             throw new NotFoundException("Invalid email or password.");
 
         return new AuthResponse
@@ -61,7 +56,7 @@ public class AuthService
 
     public async Task<UserResponse> GetProfileAsync(int userId)
     {
-        var user = await _context.Users.FindAsync(userId)
+        var user = await _userRepo.FindByIdAsync(userId)
             ?? throw new NotFoundException($"User with ID {userId} not found.");
 
         return new UserResponse

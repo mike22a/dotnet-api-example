@@ -1,7 +1,7 @@
 using BookstoreApi.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace BookstoreApi.Application.Data;
+namespace BookstoreApi.Infrastructure.Data;
 
 public class AppDbContext : DbContext
 {

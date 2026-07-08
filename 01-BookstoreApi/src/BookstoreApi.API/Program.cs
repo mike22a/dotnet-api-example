@@ -1,6 +1,10 @@
 using BookstoreApi.API.Middleware;
-using BookstoreApi.Application.Data;
+using BookstoreApi.Application.Interfaces;
 using BookstoreApi.Application.Services;
+using BookstoreApi.Domain.Interfaces.Repositories;
+using BookstoreApi.Infrastructure.Data;
+using BookstoreApi.Infrastructure.Repositories;
+using BookstoreApi.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -14,26 +18,33 @@ var builder = WebApplication.CreateBuilder(args);
 // ──────────────────────────────────────────────
 var dbProvider = builder.Configuration["DatabaseProvider"] ?? "Sqlite";
 var connStr = builder.Configuration.GetConnectionString(dbProvider)
-    ?? throw new InvalidOperationException($"Connection string for '{dbProvider}' is not configured.");
+    ?? throw new InvalidOperationException($"Connection string '{dbProvider}' is not configured.");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     if (dbProvider == "SqlServer")
-        options.UseSqlServer(connStr, b => b.MigrationsAssembly("BookstoreApi.Infrastructure"));
+        options.UseSqlServer(connStr);
     else
-        options.UseSqlite(connStr, b => b.MigrationsAssembly("BookstoreApi.Infrastructure"));
+        options.UseSqlite(connStr);
 });
 
 // ──────────────────────────────────────────────
-// 2. Application services (Application layer)
+// 2. Repositories (Infrastructure → Domain interfaces)
 // ──────────────────────────────────────────────
-builder.Services.AddScoped<JwtService>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<IBookRepository, BookRepository>();
+
+// ──────────────────────────────────────────────
+// 3. Application services (inject repository interfaces)
+// ──────────────────────────────────────────────
+builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<CategoryService>();
 builder.Services.AddScoped<BookService>();
 
 // ──────────────────────────────────────────────
-// 3. JWT Authentication
+// 4. JWT Authentication
 // ──────────────────────────────────────────────
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -51,13 +62,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 // ──────────────────────────────────────────────
-// 4. Exception handler
+// 5. Exception handler
 // ──────────────────────────────────────────────
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 // ──────────────────────────────────────────────
-// 5. Controllers + Swagger with JWT button
+// 6. Controllers + Swagger with JWT button
 // ──────────────────────────────────────────────
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -91,11 +102,11 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // ──────────────────────────────────────────────
-// 6. Build the app
+// 7. Build the app
 // ──────────────────────────────────────────────
 var app = builder.Build();
 
-// Auto-migrate and seed on startup
+// Auto-migrate on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

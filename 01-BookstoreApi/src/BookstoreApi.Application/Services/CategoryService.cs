@@ -1,86 +1,74 @@
-using BookstoreApi.Application.Data;
 using BookstoreApi.Application.DTOs.Category;
 using BookstoreApi.Domain.Entities;
 using BookstoreApi.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
+using BookstoreApi.Domain.Interfaces.Repositories;
 
 namespace BookstoreApi.Application.Services;
 
 public class CategoryService
 {
-    private readonly AppDbContext _context;
+    private readonly ICategoryRepository _categoryRepo;
 
-    public CategoryService(AppDbContext context) => _context = context;
+    public CategoryService(ICategoryRepository categoryRepo) => _categoryRepo = categoryRepo;
 
     public async Task<List<CategoryResponse>> GetAllAsync()
     {
-        return await _context.Categories
-            .Select(c => new CategoryResponse
-            {
-                Id = c.Id,
-                Name = c.Name,
-                BookCount = c.Books.Count
-            })
-            .ToListAsync();
+        var categories = await _categoryRepo.GetAllAsync();
+        return categories.Select(MapToResponse).ToList();
     }
 
     public async Task<CategoryResponse> GetByIdAsync(int id)
     {
-        var category = await _context.Categories
-            .Include(c => c.Books)
-            .FirstOrDefaultAsync(c => c.Id == id)
+        var category = await _categoryRepo.FindByIdAsync(id, includeBooks: true)
             ?? throw new NotFoundException($"Category with ID {id} not found.");
 
-        return new CategoryResponse
-        {
-            Id = category.Id,
-            Name = category.Name,
-            BookCount = category.Books.Count
-        };
+        return MapToResponse(category);
     }
 
     public async Task<CategoryResponse> CreateAsync(CreateCategoryRequest request)
     {
-        var exists = await _context.Categories
-            .AnyAsync(c => c.Name.ToLower() == request.Name.ToLower());
+        var exists = await _categoryRepo.ExistsByNameAsync(request.Name);
         if (exists)
             throw new ConflictException($"Category '{request.Name}' already exists.");
 
         var category = new Category { Name = request.Name };
-        _context.Categories.Add(category);
-        await _context.SaveChangesAsync();
+        var created = await _categoryRepo.CreateAsync(category);
 
-        return new CategoryResponse { Id = category.Id, Name = category.Name, BookCount = 0 };
+        return MapToResponse(created);
     }
 
     public async Task<CategoryResponse> UpdateAsync(int id, UpdateCategoryRequest request)
     {
-        var category = await _context.Categories.FindAsync(id)
+        var category = await _categoryRepo.FindByIdAsync(id)
             ?? throw new NotFoundException($"Category with ID {id} not found.");
 
-        var exists = await _context.Categories
-            .AnyAsync(c => c.Name.ToLower() == request.Name.ToLower() && c.Id != id);
-        if (exists)
+        var nameConflict = await _categoryRepo.ExistsByNameAsync(request.Name, excludeId: id);
+        if (nameConflict)
             throw new ConflictException($"Category '{request.Name}' already exists.");
 
         category.Name = request.Name;
-        await _context.SaveChangesAsync();
+        var updated = await _categoryRepo.UpdateAsync(category);
 
-        return await GetByIdAsync(id);
+        return MapToResponse(updated);
     }
 
     public async Task DeleteAsync(int id)
     {
-        var category = await _context.Categories
-            .Include(c => c.Books)
-            .FirstOrDefaultAsync(c => c.Id == id)
+        var category = await _categoryRepo.FindByIdAsync(id, includeBooks: true)
             ?? throw new NotFoundException($"Category with ID {id} not found.");
 
         if (category.Books.Count > 0)
             throw new BusinessRuleException(
-                $"Cannot delete category '{category.Name}' because it has {category.Books.Count} book(s). Remove or reassign the books first.");
+                $"Cannot delete category '{category.Name}' because it has {category.Books.Count} book(s). " +
+                "Remove or reassign the books first.");
 
-        _context.Categories.Remove(category);
-        await _context.SaveChangesAsync();
+        await _categoryRepo.DeleteAsync(category);
     }
+
+    private static CategoryResponse MapToResponse(Category c) => new()
+    {
+        Id = c.Id,
+        Name = c.Name,
+        BookCount = c.Books.Count
+    };
 }

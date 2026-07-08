@@ -1,61 +1,31 @@
-using BookstoreApi.Application.Data;
 using BookstoreApi.Application.DTOs.Book;
 using BookstoreApi.Domain.Entities;
 using BookstoreApi.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
+using BookstoreApi.Domain.Interfaces.Repositories;
 
 namespace BookstoreApi.Application.Services;
 
 public class BookService
 {
-    private readonly AppDbContext _context;
+    private readonly IBookRepository _bookRepo;
+    private readonly ICategoryRepository _categoryRepo;
 
-    public BookService(AppDbContext context) => _context = context;
+    public BookService(IBookRepository bookRepo, ICategoryRepository categoryRepo)
+    {
+        _bookRepo = bookRepo;
+        _categoryRepo = categoryRepo;
+    }
 
     public async Task<(List<BookResponse> Books, int Total)> GetAllAsync(
         string? search, int? categoryId, int page, int pageSize)
     {
-        var query = _context.Books
-            .Include(b => b.Category)
-            .AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(b =>
-                b.Title.Contains(search) ||
-                b.Author.Contains(search) ||
-                b.ISBN.Contains(search));
-
-        if (categoryId.HasValue)
-            query = query.Where(b => b.CategoryId == categoryId.Value);
-
-        var total = await query.CountAsync();
-
-        var books = await query
-            .OrderBy(b => b.Title)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(b => new BookResponse
-            {
-                Id = b.Id,
-                Title = b.Title,
-                Author = b.Author,
-                ISBN = b.ISBN,
-                Price = b.Price,
-                Stock = b.Stock,
-                CategoryId = b.CategoryId,
-                CategoryName = b.Category.Name,
-                CreatedAt = b.CreatedAt
-            })
-            .ToListAsync();
-
-        return (books, total);
+        var (books, total) = await _bookRepo.GetAllAsync(search, categoryId, page, pageSize);
+        return (books.Select(MapToResponse).ToList(), total);
     }
 
     public async Task<BookResponse> GetByIdAsync(int id)
     {
-        var book = await _context.Books
-            .Include(b => b.Category)
-            .FirstOrDefaultAsync(b => b.Id == id)
+        var book = await _bookRepo.FindByIdAsync(id)
             ?? throw new NotFoundException($"Book with ID {id} not found.");
 
         return MapToResponse(book);
@@ -64,13 +34,12 @@ public class BookService
     public async Task<BookResponse> CreateAsync(CreateBookRequest request)
     {
         // Business rule: ISBN must be unique
-        var isbnExists = await _context.Books.AnyAsync(b => b.ISBN == request.ISBN);
-        if (isbnExists)
+        if (await _bookRepo.ExistsByISBNAsync(request.ISBN))
             throw new ConflictException($"A book with ISBN '{request.ISBN}' already exists.");
 
-        // Validate category exists
-        var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId);
-        if (!categoryExists)
+        // Business rule: Category must exist
+        var categoryExists = await _categoryRepo.FindByIdAsync(request.CategoryId);
+        if (categoryExists is null)
             throw new NotFoundException($"Category with ID {request.CategoryId} not found.");
 
         var book = new Book
@@ -83,26 +52,22 @@ public class BookService
             CategoryId = request.CategoryId
         };
 
-        _context.Books.Add(book);
-        await _context.SaveChangesAsync();
-
-        return await GetByIdAsync(book.Id);
+        var created = await _bookRepo.CreateAsync(book);
+        return MapToResponse(created);
     }
 
     public async Task<BookResponse> UpdateAsync(int id, UpdateBookRequest request)
     {
-        var book = await _context.Books.FindAsync(id)
+        var book = await _bookRepo.FindByIdAsync(id)
             ?? throw new NotFoundException($"Book with ID {id} not found.");
 
         // Business rule: ISBN must be unique (excluding current book)
-        var isbnExists = await _context.Books
-            .AnyAsync(b => b.ISBN == request.ISBN && b.Id != id);
-        if (isbnExists)
+        if (await _bookRepo.ExistsByISBNAsync(request.ISBN, excludeId: id))
             throw new ConflictException($"A book with ISBN '{request.ISBN}' already exists.");
 
-        // Validate category exists
-        var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId);
-        if (!categoryExists)
+        // Business rule: Category must exist
+        var categoryExists = await _categoryRepo.FindByIdAsync(request.CategoryId);
+        if (categoryExists is null)
             throw new NotFoundException($"Category with ID {request.CategoryId} not found.");
 
         book.Title = request.Title;
@@ -112,18 +77,16 @@ public class BookService
         book.Stock = request.Stock;
         book.CategoryId = request.CategoryId;
 
-        await _context.SaveChangesAsync();
-
-        return await GetByIdAsync(id);
+        var updated = await _bookRepo.UpdateAsync(book);
+        return MapToResponse(updated);
     }
 
     public async Task DeleteAsync(int id)
     {
-        var book = await _context.Books.FindAsync(id)
+        var book = await _bookRepo.FindByIdAsync(id)
             ?? throw new NotFoundException($"Book with ID {id} not found.");
 
-        _context.Books.Remove(book);
-        await _context.SaveChangesAsync();
+        await _bookRepo.DeleteAsync(book);
     }
 
     private static BookResponse MapToResponse(Book book) => new()

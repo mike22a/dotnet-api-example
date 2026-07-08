@@ -1,3 +1,4 @@
+using BookstoreApi.Application.Interfaces;
 using BookstoreApi.Domain.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
@@ -5,9 +6,9 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 
-namespace BookstoreApi.Application.Services;
+namespace BookstoreApi.Infrastructure.Services;
 
-public class JwtService
+public class JwtService : IJwtService
 {
     private readonly IConfiguration _config;
 
